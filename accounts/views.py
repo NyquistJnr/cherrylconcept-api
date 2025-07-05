@@ -80,7 +80,7 @@ def forgot_password(request):
         reset_token = PasswordResetToken.objects.create(user=user)
         
         # Build reset URL
-        reset_url = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+        reset_url = f"{settings.FRONTEND_URL}/forgot-password?token={reset_token.token}"
         
         # Send email asynchronously
         # removed ==> ".delay()"
