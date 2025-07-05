@@ -1,5 +1,12 @@
 from django.urls import path
 from . import views
+from .paystack_views import (
+    initialize_payment, 
+    verify_payment, 
+    PaystackWebhookView, 
+    refund_payment, 
+    payment_status
+)
 
 urlpatterns = [
     path('create/', views.create_order, name='create_order'),
@@ -12,6 +19,13 @@ urlpatterns = [
 
     # Loyalty endpoints
     path('loyalty/account/', views.loyalty_account, name='loyalty_account'),
+
+     # Payment endpoints
+    path('payments/initialize/<uuid:order_id>/', initialize_payment, name='initialize_payment'),
+    path('payments/verify/<str:reference>/', verify_payment, name='verify_payment'),
+    path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack_webhook'),
+    path('payments/refund/<uuid:order_id>/', refund_payment, name='refund_payment'),
+    path('payments/status/<uuid:order_id>/', payment_status, name='payment_status'),
     
     # Shipping addresses endpoints
     path('shipping-addresses/', views.shipping_addresses, name='shipping_addresses'),

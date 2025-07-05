@@ -1,18 +1,22 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login
 from django.conf import settings
 from django.urls import reverse
+from django.shortcuts import get_object_or_404
+from django.core.paginator import Paginator
+from django.db import models
 from .models import User, PasswordResetToken
 from .serializers import (
     UserRegistrationSerializer, 
     UserLoginSerializer, 
     ForgotPasswordSerializer, 
     ResetPasswordSerializer,
-    UserSerializer
+    UserSerializer,
+    UserDetailSerializer
 )
 from .tasks import send_password_reset_email
 
@@ -83,8 +87,7 @@ def forgot_password(request):
         reset_url = f"{settings.FRONTEND_URL}/forgot-password?token={reset_token.token}"
         
         # Send email asynchronously
-        # removed ==> ".delay()"
-        send_password_reset_email(
+        send_password_reset_email.delay(
             user_email=user.email,
             reset_url=reset_url,
             user_name=user.full_name
@@ -156,3 +159,69 @@ def logout(request):
             'message': 'Logout failed',
             'error': str(e)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def get_all_users(request):
+    """Get all users with pagination (Admin only)"""
+    try:
+        # Get query parameters
+        page = request.GET.get('page', 1)
+        page_size = request.GET.get('page_size', 20)
+        search = request.GET.get('search', '')
+        
+        # Filter users based on search
+        users = User.objects.all().order_by('-created_at')
+        
+        if search:
+            users = users.filter(
+                models.Q(first_name__icontains=search) |
+                models.Q(last_name__icontains=search) |
+                models.Q(email__icontains=search) |
+                models.Q(phone_number__icontains=search)
+            )
+        
+        # Paginate results
+        paginator = Paginator(users, page_size)
+        page_obj = paginator.get_page(page)
+        
+        return Response({
+            'message': 'Users retrieved successfully',
+            'data': {
+                'users': UserSerializer(page_obj.object_list, many=True).data,
+                'pagination': {
+                    'current_page': page_obj.number,
+                    'total_pages': paginator.num_pages,
+                    'total_users': paginator.count,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                    'page_size': int(page_size)
+                }
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'message': 'Failed to retrieve users',
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def get_user_by_id(request, user_id):
+    """Get single user by ID (Admin only)"""
+    try:
+        user = get_object_or_404(User, id=user_id)
+        
+        return Response({
+            'message': 'User retrieved successfully',
+            'data': {
+                'user': UserDetailSerializer(user).data
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({
+            'message': 'User not found',
+            'error': str(e)
+        }, status=status.HTTP_404_NOT_FOUND)

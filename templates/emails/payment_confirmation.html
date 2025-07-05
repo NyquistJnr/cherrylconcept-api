@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Confirmation</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      .container {
+        background-color: #f9f9f9;
+        padding: 30px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+      }
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+        color: #28a745;
+      }
+      .order-details {
+        background-color: white;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .item {
+        border-bottom: 1px solid #eee;
+        padding: 10px 0;
+      }
+      .item:last-child {
+        border-bottom: none;
+      }
+      .total {
+        font-weight: bold;
+        font-size: 18px;
+        color: #28a745;
+      }
+      .btn {
+        display: inline-block;
+        padding: 12px 24px;
+        background-color: #007bff;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+        margin: 20px 0;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid #ddd;
+        font-size: 12px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>✅ Payment Confirmed!</h1>
+      </div>
+
+      <p>Dear {{ customer_name }},</p>
+
+      <p>
+        Thank you for your payment! Your order has been confirmed and will be
+        processed shortly.
+      </p>
+
+      <div class="order-details">
+        <h3>Order Details</h3>
+        <p><strong>Order Number:</strong> {{ order.order_number }}</p>
+        <p><strong>Payment Reference:</strong> {{ order.payment_reference }}</p>
+        <p>
+          <strong>Payment Date:</strong> {{ order.payment_date|date:"F d, Y H:i"
+          }}
+        </p>
+
+        <h4>Items Ordered:</h4>
+        {% for item in items %}
+        <div class="item">
+          <strong>{{ item.product_name }}</strong>
+          {% if item.color %}- Color: {{ item.color }}{% endif %} {% if
+          item.size %}- Size: {{ item.size }}{% endif %}
+          <br />
+          Quantity: {{ item.quantity }} × ₦{{ item.product_price }} = ₦{{
+          item.line_total }}
+        </div>
+        {% endfor %}
+
+        <div style="margin-top: 20px">
+          <p>Subtotal: ₦{{ order.subtotal }}</p>
+          <p>Shipping: ₦{{ order.shipping_fee }}</p>
+          <p>Tax: ₦{{ order.tax_amount }}</p>
+          {% if order.loyalty_points_used %}
+          <p>Loyalty Discount: -₦{{ order.loyalty_points_used }}</p>
+          {% endif %}
+          <p class="total">Total Paid: ₦{{ order.total_amount }}</p>
+        </div>
+      </div>
+
+      {% if order.loyalty_points_earned %}
+      <div
+        style="
+          background-color: #fff3cd;
+          padding: 15px;
+          border-radius: 5px;
+          margin: 20px 0;
+        "
+      >
+        <h4>🎉 Loyalty Points Earned!</h4>
+        <p>
+          You've earned
+          <strong>{{ order.loyalty_points_earned }} points</strong> from this
+          purchase!
+        </p>
+      </div>
+      {% endif %}
+
+      <div class="footer">
+        <p>
+          Your order is now being processed and you'll receive shipping updates
+          soon.
+        </p>
+        <p>This is an automated message, please do not reply to this email.</p>
+      </div>
+    </div>
+  </body>
+</html>

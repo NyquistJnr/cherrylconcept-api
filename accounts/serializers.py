@@ -87,7 +87,36 @@ class ResetPasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid or expired token")
 
 class UserSerializer(serializers.ModelSerializer):
+    full_name = serializers.ReadOnlyField()
+    
     class Meta:
         model = User
-        fields = ['id', 'first_name', 'last_name', 'email', 'phone_number', 'full_name', 'is_verified', 'created_at']
-        read_only_fields = ['id', 'is_verified', 'created_at']
+        fields = [
+            'id', 'username', 'first_name', 'last_name', 'email', 
+            'phone_number', 'full_name', 'is_verified', 'is_active', 
+            'is_staff', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'username', 'is_verified', 'created_at', 'updated_at']
+
+class UserDetailSerializer(serializers.ModelSerializer):
+    """Detailed user serializer for admin views"""
+    full_name = serializers.ReadOnlyField()
+    last_login_formatted = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'first_name', 'last_name', 'email', 
+            'phone_number', 'full_name', 'is_verified', 'is_active', 
+            'is_staff', 'is_superuser', 'last_login', 'last_login_formatted',
+            'date_joined', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'username', 'last_login', 'date_joined', 
+            'created_at', 'updated_at'
+        ]
+    
+    def get_last_login_formatted(self, obj):
+        if obj.last_login:
+            return obj.last_login.strftime('%Y-%m-%d %H:%M:%S UTC')
+        return None

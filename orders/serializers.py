@@ -115,7 +115,10 @@ class OrderCreateSerializer(serializers.Serializer):
             shipping_fee=shipping_fee,
             tax_amount=tax_amount,
             total_amount=total_amount,
-            loyalty_points_used=use_loyalty_points
+            loyalty_points_used=use_loyalty_points,
+            currency='NGN',  # Default currency
+            status='pending',  # Order starts as pending payment
+            payment_status='pending'
         )
         
         # Create order items
@@ -131,20 +134,10 @@ class OrderCreateSerializer(serializers.Serializer):
                 size=item_data.get('size', ''),
             )
         
-        # Handle loyalty points for logged in users
-        if user:
+        # Handle loyalty points for logged in users (deduct used points immediately)
+        if user and use_loyalty_points > 0:
             loyalty_account, created = LoyaltyAccount.objects.get_or_create(user=user)
-            
-            # Use loyalty points if specified
-            if use_loyalty_points > 0:
-                loyalty_account.use_points(use_loyalty_points, order)
-            
-            # Award loyalty points (5% of subtotal)
-            points_earned = order.calculate_loyalty_points()
-            if points_earned > 0:
-                loyalty_account.add_points(points_earned, order)
-                order.loyalty_points_earned = points_earned
-                order.save()
+            loyalty_account.use_points(use_loyalty_points, order)
         
         # Save shipping address if requested
         if user and save_shipping_address and shipping_address_label:
@@ -166,13 +159,13 @@ class OrderCreateSerializer(serializers.Serializer):
     
     def calculate_shipping_fee(self, subtotal):
         """Calculate shipping fee - free shipping over $100"""
-        if subtotal >= Decimal('100000.00'):
+        if subtotal >= Decimal('100.00'):
             return Decimal('0.00')
-        return Decimal('2000.00')
-
+        return Decimal('10.00')
+    
     def calculate_tax(self, subtotal):
         """Calculate tax - 8% tax rate"""
-        return subtotal * Decimal('0.05')
+        return subtotal * Decimal('0.08')
 
 class OrderItemSerializer(serializers.ModelSerializer):
     product_id = serializers.UUIDField(source='product.id', read_only=True)
@@ -214,9 +207,11 @@ class OrderDetailSerializer(serializers.ModelSerializer):
             'customer_last_name', 'customer_phone', 'customer_full_name',
             'shipping_address_line1', 'shipping_address_line2', 'shipping_city',
             'shipping_state', 'shipping_postal_code', 'shipping_country', 'shipping_address',
-            'subtotal', 'shipping_fee', 'tax_amount', 'total_amount', 'status',
-            'notes', 'tracking_number', 'loyalty_points_earned', 'loyalty_points_used',
-            'items', 'created_at', 'updated_at', 'confirmed_at', 'shipped_at', 'delivered_at'
+            'subtotal', 'shipping_fee', 'tax_amount', 'total_amount', 'currency',
+            'status', 'payment_status', 'payment_reference', 'payment_method', 'paid_amount',
+            'payment_date', 'notes', 'tracking_number', 'loyalty_points_earned', 
+            'loyalty_points_used', 'items', 'created_at', 'updated_at', 'confirmed_at', 
+            'shipped_at', 'delivered_at'
         ]
 
 class LoyaltyTransactionSerializer(serializers.ModelSerializer):
