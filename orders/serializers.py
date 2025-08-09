@@ -136,7 +136,7 @@ class OrderCreateSerializer(serializers.Serializer):
         
         # Handle loyalty points for logged in users (deduct used points immediately)
         if user and use_loyalty_points > 0:
-            loyalty_account, created = LoyaltyAccount.objects.get_or_create(user=user)
+            loyalty_account, _ = LoyaltyAccount.objects.get_or_create(user=user)
             loyalty_account.use_points(use_loyalty_points, order)
         
         # Save shipping address if requested
@@ -158,14 +158,14 @@ class OrderCreateSerializer(serializers.Serializer):
         return order
     
     def calculate_shipping_fee(self, subtotal):
-        """Calculate shipping fee - free shipping over $100"""
-        if subtotal >= Decimal('100.00'):
+        """Calculate shipping fee - free shipping over ₦100,000.00"""
+        if subtotal >= Decimal('100000.00'):
             return Decimal('0.00')
-        return Decimal('10.00')
-    
+        return Decimal('10000.00')
+
     def calculate_tax(self, subtotal):
         """Calculate tax - 8% tax rate"""
-        return subtotal * Decimal('0.08')
+        return subtotal * Decimal('0.03')
 
 class OrderItemSerializer(serializers.ModelSerializer):
     product_id = serializers.UUIDField(source='product.id', read_only=True)

@@ -5,8 +5,10 @@ from decimal import Decimal
 import random
 import string
 import uuid
+import logging
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -34,13 +36,11 @@ class Order(models.Model):
     order_number = models.CharField(max_length=20, unique=True, blank=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='orders')
     
-    # Customer Information (required for both logged in and guest users)
     customer_email = models.EmailField()
     customer_first_name = models.CharField(max_length=100)
     customer_last_name = models.CharField(max_length=100)
     customer_phone = models.CharField(max_length=20)
     
-    # Shipping Information
     shipping_address_line1 = models.CharField(max_length=255)
     shipping_address_line2 = models.CharField(max_length=255, blank=True)
     shipping_city = models.CharField(max_length=100)
@@ -48,14 +48,12 @@ class Order(models.Model):
     shipping_postal_code = models.CharField(max_length=20)
     shipping_country = models.CharField(max_length=100)
     
-    # Order Details
-    subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
-    shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
-    tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.00)])
+    shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0.00)])
+    tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0.00)])
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0.00)])
     currency = models.CharField(max_length=3, default='NGN')
     
-    # Payment Information
     payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
     payment_reference = models.CharField(max_length=255, unique=True, blank=True)
     paystack_reference = models.CharField(max_length=255, blank=True)
@@ -64,17 +62,14 @@ class Order(models.Model):
     paid_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     payment_date = models.DateTimeField(null=True, blank=True)
     
-    # Order Status & Tracking
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True)
     tracking_number = models.CharField(max_length=100, blank=True)
     
-    # Loyalty Points
     loyalty_points_earned = models.PositiveIntegerField(default=0)
     loyalty_points_used = models.PositiveIntegerField(default=0)
     loyalty_points_awarded = models.BooleanField(default=False)
     
-    # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
@@ -135,7 +130,7 @@ class Order(models.Model):
     
     def calculate_loyalty_points(self):
         """Calculate loyalty points earned (5% of subtotal)"""
-        if self.user:  # Only logged in users earn points
+        if self.user:
             return int(self.subtotal * Decimal('0.05'))
         return 0
     
@@ -155,21 +150,38 @@ class Order(models.Model):
         """Convert amount to kobo for Paystack (multiply by 100)"""
         return int(self.total_amount * 100)
 
+    def handle_failed_payment(self):
+        """
+        Handles all business logic for a failed payment.
+        This includes updating the order status and reversing any used loyalty points.
+        """
+        self.status = 'failed'
+        self.payment_status = 'failed'
+        self.save(update_fields=['status', 'payment_status', 'updated_at'])
+
+        if self.user and self.loyalty_points_used > 0:
+            try:
+                loyalty_account = self.user.loyalty_account
+                if not loyalty_account.transactions.filter(order=self, transaction_type='reversal').exists():
+                    loyalty_account.reverse_used_points(self.loyalty_points_used, self)
+                    logger.info(f"Reversed {self.loyalty_points_used} loyalty points for failed order {self.order_number}")
+            except LoyaltyAccount.DoesNotExist:
+                logger.error(f"Loyalty account not found for user {self.user.id} while reversing points for failed order {self.id}")
+            except Exception as e:
+                logger.error(f"Failed to reverse loyalty points for failed order {self.id}: {str(e)}")
+
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey('products.Product', on_delete=models.CASCADE)
     
-    # Product details at time of purchase (for record keeping)
     product_name = models.CharField(max_length=200)
     product_price = models.DecimalField(max_digits=10, decimal_places=2)
     
-    # Order item specifics
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     color = models.CharField(max_length=50, blank=True)
     size = models.CharField(max_length=20, blank=True)
     
-    # Calculated fields
     line_total = models.DecimalField(max_digits=10, decimal_places=2)
     
     class Meta:
@@ -200,7 +212,7 @@ class LoyaltyAccount(models.Model):
         verbose_name_plural = 'Loyalty Accounts'
     
     def __str__(self):
-        return f"{self.user.full_name} - {self.current_balance} points"
+        return f"{self.user.get_full_name()} - {self.current_balance} points"
     
     def add_points(self, points, order=None):
         """Add points to account"""
@@ -209,7 +221,6 @@ class LoyaltyAccount(models.Model):
         self.update_tier()
         self.save()
         
-        # Create transaction record
         LoyaltyTransaction.objects.create(
             account=self,
             transaction_type='earned',
@@ -225,7 +236,6 @@ class LoyaltyAccount(models.Model):
             self.current_balance -= points
             self.save()
             
-            # Create transaction record
             LoyaltyTransaction.objects.create(
                 account=self,
                 transaction_type='used',
@@ -235,7 +245,22 @@ class LoyaltyAccount(models.Model):
             )
             return True
         return False
-    
+        
+    def reverse_used_points(self, points, order=None):
+        """Reverses a point usage transaction, e.g., for a failed payment."""
+        self.total_points_used -= points
+        self.current_balance += points
+        self.update_tier()
+        self.save()
+
+        LoyaltyTransaction.objects.create(
+            account=self,
+            transaction_type='reversal',
+            points=points,
+            order=order,
+            description=f"Points reversed for failed order {order.order_number if order else 'N/A'}"
+        )
+
     def update_tier(self):
         """Update user tier based on total points earned"""
         if self.total_points_earned >= 10000:
@@ -253,6 +278,7 @@ class LoyaltyTransaction(models.Model):
         ('used', 'Points Used'),
         ('expired', 'Points Expired'),
         ('bonus', 'Bonus Points'),
+        ('reversal', 'Points Reversal'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -270,7 +296,9 @@ class LoyaltyTransaction(models.Model):
         ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.account.user.full_name} - {self.transaction_type} {self.points} points"
+        return f"{self.account.user.get_full_name()} - {self.transaction_type} {self.points} points"
+
+# --- RESTORED MODELS ---
 
 class ShippingAddress(models.Model):
     """Saved shipping addresses for logged in users"""
@@ -297,10 +325,9 @@ class ShippingAddress(models.Model):
         ordering = ['-is_default', '-created_at']
     
     def __str__(self):
-        return f"{self.user.full_name} - {self.label}"
+        return f"{self.user.get_full_name()} - {self.label}"
     
     def save(self, *args, **kwargs):
-        # If this is set as default, unset other default addresses
         if self.is_default:
             ShippingAddress.objects.filter(user=self.user, is_default=True).exclude(id=self.id).update(is_default=False)
         super().save(*args, **kwargs)
@@ -311,7 +338,6 @@ class ShippingAddress(models.Model):
     
     @property
     def formatted_address(self):
-        """Return formatted address"""
         address = f"{self.address_line1}"
         if self.address_line2:
             address += f", {self.address_line2}"
@@ -323,13 +349,7 @@ class PaystackEvent(models.Model):
     EVENT_TYPES = [
         ('charge.success', 'Charge Success'),
         ('charge.failed', 'Charge Failed'),
-        ('invoice.create', 'Invoice Create'),
-        ('invoice.update', 'Invoice Update'),
-        ('subscription.create', 'Subscription Create'),
-        ('subscription.disable', 'Subscription Disable'),
-        ('transfer.success', 'Transfer Success'),
-        ('transfer.failed', 'Transfer Failed'),
-        ('transfer.reversed', 'Transfer Reversed'),
+        # ... other event types
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -352,25 +372,10 @@ class PaystackEvent(models.Model):
             models.Index(fields=['event_id']),
             models.Index(fields=['event_type']),
             models.Index(fields=['processed']),
-            models.Index(fields=['created_at']),
         ]
     
     def __str__(self):
         return f"Paystack Event {self.event_type} - {self.event_id}"
-    
-    def mark_as_processed(self):
-        """Mark event as successfully processed"""
-        from django.utils import timezone
-        self.processed = True
-        self.processed_at = timezone.now()
-        self.save(update_fields=['processed', 'processed_at'])
-    
-    def increment_processing_attempts(self, error_message=None):
-        """Increment processing attempts and optionally store error"""
-        self.processing_attempts += 1
-        if error_message:
-            self.last_processing_error = str(error_message)
-        self.save(update_fields=['processing_attempts', 'last_processing_error'])
 
 class PaymentTransaction(models.Model):
     """Detailed payment transaction records"""
@@ -379,8 +384,6 @@ class PaymentTransaction(models.Model):
         ('success', 'Success'),
         ('failed', 'Failed'),
         ('abandoned', 'Abandoned'),
-        ('cancelled', 'Cancelled'),
-        ('refunded', 'Refunded'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -392,13 +395,9 @@ class PaymentTransaction(models.Model):
     status = models.CharField(max_length=20, choices=TRANSACTION_STATUS, default='pending')
     gateway_response = models.CharField(max_length=255, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
-    channel = models.CharField(max_length=50, blank=True, help_text="Payment channel (card, bank, ussd, etc.)")
+    channel = models.CharField(max_length=50, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     fees = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    authorization_code = models.CharField(max_length=255, blank=True)
-    card_type = models.CharField(max_length=50, blank=True)
-    bank = models.CharField(max_length=100, blank=True)
-    last_4 = models.CharField(max_length=4, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -412,7 +411,6 @@ class PaymentTransaction(models.Model):
             models.Index(fields=['reference']),
             models.Index(fields=['paystack_reference']),
             models.Index(fields=['status']),
-            models.Index(fields=['created_at']),
         ]
     
     def __str__(self):

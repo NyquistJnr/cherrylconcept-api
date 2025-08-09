@@ -271,8 +271,8 @@ def order_summary(request):
             })
         
         # Calculate fees
-        shipping_fee = Decimal('10.00') if subtotal < Decimal('100.00') else Decimal('0.00')
-        tax_amount = subtotal * Decimal('0.08')
+        shipping_fee = Decimal('10000.00') if subtotal < Decimal('100000.00') else Decimal('0.00')
+        tax_amount = subtotal * Decimal('0.03')
         loyalty_discount = Decimal(str(use_loyalty_points))
         total_amount = subtotal + shipping_fee + tax_amount - loyalty_discount
         
@@ -280,6 +280,8 @@ def order_summary(request):
         potential_points = 0
         if request.user.is_authenticated:
             potential_points = int(subtotal * Decimal('0.05'))
+
+        free_shipping_threshold = Decimal('100000.00')
         
         return Response({
             'message': 'Order summary calculated successfully',
@@ -287,15 +289,15 @@ def order_summary(request):
                 'items': order_items,
                 'subtotal': str(subtotal),
                 'shipping_fee': str(shipping_fee),
-                'tax_amount': str(tax_amount),
+                'tax_amount': str(tax_amount), 
                 'loyalty_discount': str(loyalty_discount),
                 'total_amount': str(total_amount),
                 'potential_loyalty_points': potential_points,
-                'free_shipping_threshold': '100.00',
-                'free_shipping_remaining': str(max(Decimal('0.00'), Decimal('100.00') - subtotal))
-            }
-        }, status=status.HTTP_200_OK)
-    
+                'free_shipping_threshold': str(free_shipping_threshold),
+                'free_shipping_remaining': str(max(Decimal('0.00'), free_shipping_threshold - subtotal))
+        }
+    }, status=status.HTTP_200_OK)
+
     except Product.DoesNotExist:
         return Response({
             'message': 'One or more products not found'
