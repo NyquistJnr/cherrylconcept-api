@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.core.validators import MinValueValidator
 from decimal import Decimal
+from django.utils import timezone
 import random
 import string
 import uuid
@@ -93,6 +94,7 @@ class Order(models.Model):
         return f"Order {self.order_number} - {self.customer_first_name} {self.customer_last_name}"
     
     def save(self, *args, **kwargs):
+        # Generate order_number and payment_reference if they don't exist
         if not self.order_number:
             self.order_number = self.generate_order_number()
         if not self.payment_reference:
@@ -110,10 +112,36 @@ class Order(models.Model):
     
     def generate_payment_reference(self):
         """Generate unique payment reference for Paystack"""
-        import time
-        timestamp = str(int(time.time()))
-        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        return f"order_{self.id}_{timestamp}_{random_suffix}"
+        return f"ref-{uuid.uuid4().hex}"
+    
+    def handle_successful_payment(self, transaction_data: dict):
+        """
+        Handles all business logic for a successful payment.
+        This includes updating the order status, recording payment details,
+        awarding loyalty points, and queueing a confirmation email.
+        """
+        if self.payment_status == 'success':
+            logger.info(f"Order {self.order_number} already marked as successful. Skipping.")
+            return
+
+        self.payment_status = 'success'
+        self.status = 'paid'
+        self.payment_method = transaction_data.get('channel', 'unknown')
+        self.paid_amount = Decimal(str(transaction_data.get('amount', 0))) / 100
+        self.payment_date = timezone.now()
+        self.save(update_fields=[
+            'payment_status', 'status', 'payment_method',
+            'paid_amount', 'payment_date', 'updated_at'
+        ])
+
+        self.award_loyalty_points()
+
+        # Queue confirmation email task
+        from .tasks import send_payment_confirmation_email
+        send_payment_confirmation_email.delay(str(self.id))
+        logger.info(f"Queued successful payment email for order {self.order_number}")
+
+
     
     @property
     def customer_full_name(self):
@@ -153,8 +181,12 @@ class Order(models.Model):
     def handle_failed_payment(self):
         """
         Handles all business logic for a failed payment.
-        This includes updating the order status and reversing any used loyalty points.
+        This includes updating the order status, reversing any used loyalty points,
+        and queueing a failure notification email.
         """
+        if self.payment_status == 'failed':
+            return # Prevent multiple updates for the same event
+
         self.status = 'failed'
         self.payment_status = 'failed'
         self.save(update_fields=['status', 'payment_status', 'updated_at'])
@@ -169,6 +201,12 @@ class Order(models.Model):
                 logger.error(f"Loyalty account not found for user {self.user.id} while reversing points for failed order {self.id}")
             except Exception as e:
                 logger.error(f"Failed to reverse loyalty points for failed order {self.id}: {str(e)}")
+        
+        # Queue failure notification email task
+        from .tasks import send_payment_failed_email
+        send_payment_failed_email.delay(str(self.id))
+        logger.info(f"Queued failed payment email for order {self.order_number}")
+
 
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

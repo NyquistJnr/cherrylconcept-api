@@ -174,7 +174,7 @@ class PaystackWebhookProcessor:
     
     def _process_successful_payment(self, data: Dict[str, Any], paystack_event) -> bool:
         """Process successful payment webhook"""
-        from .models import Order
+        from .models import Order, PaymentTransaction
         
         try:
             reference = data.get('reference')
@@ -185,53 +185,47 @@ class PaystackWebhookProcessor:
             paystack_event.order = order
             paystack_event.save()
             
+            # Always verify with Paystack as the source of truth
             verification_data = self.paystack_api.verify_transaction(reference)
             if verification_data.get('status') != 'success':
-                raise ValueError(f"Transaction verification failed: {verification_data.get('gateway_response')}")
-            
-            transaction, _ = PaymentTransaction.objects.update_or_create(
+                logger.warning(f"Webhook/Verification mismatch for {reference}. Webhook: success, Verification: {verification_data.get('status')}")
+                order.handle_failed_payment() # Treat as failure
+                return True
+
+            # Create or update the detailed PaymentTransaction record
+            PaymentTransaction.objects.update_or_create(
                 reference=reference,
                 defaults={
                     'order': order,
-                    'paystack_reference': data.get('id', ''),
-                    'amount': Decimal(str(data.get('amount', 0))) / 100,
-                    'currency': data.get('currency', 'NGN'),
+                    'paystack_reference': verification_data.get('id', ''),
+                    'amount': Decimal(str(verification_data.get('amount', 0))) / 100,
+                    'currency': verification_data.get('currency', 'NGN'),
                     'status': 'success',
-                    'gateway_response': data.get('gateway_response', ''),
+                    'gateway_response': verification_data.get('gateway_response', ''),
                     'paid_at': timezone.now(),
-                    'channel': data.get('channel', ''),
-                    'fees': Decimal(str(data.get('fees', 0))) / 100,
-                    'authorization_code': data.get('authorization', {}).get('authorization_code', ''),
-                    'card_type': data.get('authorization', {}).get('card_type', ''),
-                    'bank': data.get('authorization', {}).get('bank', ''),
-                    'last_4': data.get('authorization', {}).get('last4', ''),
-                    'metadata': data.get('metadata', {}),
+                    'channel': verification_data.get('channel', ''),
+                    'fees': Decimal(str(verification_data.get('fees', 0))) / 100,
+                    'metadata': verification_data.get('metadata', {}),
                 }
             )
             
-            order.payment_status = 'success'
-            order.status = 'paid'
-            order.payment_method = data.get('channel', '')
-            order.paid_amount = transaction.amount
-            order.payment_date = transaction.paid_at
-            order.save()
-            
-            order.award_loyalty_points()
+            # Use the new centralized handler method on the order model
+            order.handle_successful_payment(verification_data)
             
             logger.info(f"Successfully processed payment for order {order.order_number}")
             return True
             
         except Order.DoesNotExist:
             logger.error(f"Order not found for payment reference: {reference}")
-            return True
+            return True # Event is processed; don't retry for a non-existent order.
         except Exception as e:
-            logger.error(f"Error processing successful payment: {str(e)}")
-            return False
+            logger.error(f"Error processing successful payment for ref {data.get('reference')}: {str(e)}")
+            return False # Allow Celery to retry
+        
     
     def _process_failed_payment(self, data: Dict[str, Any], paystack_event) -> bool:
         """Process failed payment webhook"""
-        # ✨ THIS METHOD IS NOW FIXED AND SIMPLIFIED
-        from .models import Order
+        from .models import Order, PaymentTransaction
 
         try:
             reference = data.get('reference')
@@ -246,19 +240,13 @@ class PaystackWebhookProcessor:
                 reference=reference,
                 defaults={
                     'order': order,
-                    'paystack_reference': data.get('id', ''),
-                    'amount': Decimal(str(data.get('amount', 0))) / 100,
-                    'currency': data.get('currency', 'NGN'),
                     'status': 'failed',
                     'gateway_response': data.get('gateway_response', ''),
-                    'channel': data.get('channel', ''),
-                    'metadata': data.get('metadata', {}),
                 }
             )
             
-            # This single call now handles updating the order status AND reversing the points.
+            # This single call now handles everything
             order.handle_failed_payment()
-            
             
             logger.info(f"Processed failed payment for order {order.order_number}")
             return True
@@ -267,5 +255,5 @@ class PaystackWebhookProcessor:
             logger.error(f"Order not found for payment reference: {reference}")
             return True
         except Exception as e:
-            logger.error(f"Error processing failed payment: {str(e)}")
+            logger.error(f"Error processing failed payment for ref {data.get('reference')}: {str(e)}")
             return False
