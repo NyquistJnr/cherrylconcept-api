@@ -1,8 +1,11 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
+from datetime import datetime
 from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
 from django.db.models import Q
 from .models import Order, LoyaltyAccount, ShippingAddress
 from .serializers import (
@@ -12,6 +15,18 @@ from .serializers import (
     LoyaltyAccountSerializer,
     ShippingAddressSerializer
 )
+
+User = get_user_model()
+
+
+class StandardResultsSetPagination(PageNumberPagination):
+    """
+    Standard pagination settings for list views.
+    """
+    page_size = 25
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -330,3 +345,120 @@ def order_stats(request):
         'message': 'Order statistics retrieved successfully',
         'data': stats
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_all_orders(request):
+    """
+    Admin endpoint to get all orders with filtering, search, and pagination.
+    
+    Query Parameters:
+    - q: Search by order number, customer email, or customer name.
+    - status: Filter by order status (e.g., 'shipped', 'pending').
+    - payment_status: Filter by payment status (e.g., 'success', 'failed').
+    - start_date: Filter orders created on or after this date (YYYY-MM-DD).
+    - end_date: Filter orders created on or before this date (YYYY-MM-DD).
+    - page: Page number for pagination.
+    - page_size: Number of results per page.
+    """
+    queryset = Order.objects.all().select_related('user').order_by('-created_at')
+
+    # General search filter
+    search_query = request.query_params.get('q')
+    if search_query:
+        queryset = queryset.filter(
+            Q(order_number__icontains=search_query) |
+            Q(customer_email__icontains=search_query) |
+            Q(customer_first_name__icontains=search_query) |
+            Q(customer_last_name__icontains=search_query)
+        )
+
+    # Status filter
+    status_filter = request.query_params.get('status')
+    if status_filter:
+        queryset = queryset.filter(status=status_filter)
+        
+    # Payment status filter
+    payment_status_filter = request.query_params.get('payment_status')
+    if payment_status_filter:
+        queryset = queryset.filter(payment_status=payment_status_filter)
+
+    # Date range filter
+    start_date_str = request.query_params.get('start_date')
+    if start_date_str:
+        try:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid start_date format. Use YYYY-MM-DD.'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    end_date_str = request.query_params.get('end_date')
+    if end_date_str:
+        try:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            queryset = queryset.filter(created_at__date__lte=end_date)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Invalid end_date format. Use YYYY-MM-DD.'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+    # Apply pagination
+    paginator = StandardResultsSetPagination()
+    paginated_queryset = paginator.paginate_queryset(queryset, request)
+    
+    # Serialize the paginated data
+    serializer = OrderListSerializer(paginated_queryset, many=True)
+    
+    # Return the standard paginated response
+    return paginator.get_paginated_response(serializer.data)
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_user_loyalty_account(request, user_id):
+    """
+    Admin endpoint to get a specific user's loyalty account details by user ID.
+    """
+    try:
+        # First, find the user by their ID
+        user = get_object_or_404(User, id=user_id)
+        
+        # Then, find the loyalty account linked to that user
+        loyalty_account = get_object_or_404(LoyaltyAccount, user=user)
+        
+        serializer = LoyaltyAccountSerializer(loyalty_account)
+        
+        return Response({
+            'message': "User's loyalty account retrieved successfully",
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except LoyaltyAccount.DoesNotExist:
+        return Response({
+            'message': 'This user does not have a loyalty account.'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(['GET'])
+@permission_classes([IsAdminUser])
+def admin_user_order_history(request, user_id):
+    """
+    Admin endpoint to get the order history for a specific user.
+    Supports pagination.
+    """
+    # Ensure the user exists, otherwise return a 404
+    user = get_object_or_404(User, id=user_id)
+    
+    # Filter orders for that specific user and order by most recent
+    queryset = Order.objects.filter(user=user).order_by('-created_at')
+    
+    # Apply the same standard pagination used elsewhere
+    paginator = StandardResultsSetPagination()
+    paginated_queryset = paginator.paginate_queryset(queryset, request)
+    
+    serializer = OrderListSerializer(paginated_queryset, many=True)
+    
+    return paginator.get_paginated_response(serializer.data)

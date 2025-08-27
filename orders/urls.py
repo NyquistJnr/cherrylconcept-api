@@ -17,6 +17,11 @@ urlpatterns = [
     path('summary/', views.order_summary, name='order_summary'),
     path('stats/', views.order_stats, name='order_stats'),
 
+    path('admin/all/', views.admin_all_orders, name='admin_all_orders'),
+    path('admin/users/<uuid:user_id>/loyalty/', views.admin_user_loyalty_account, name='admin_user_loyalty_account'),
+    path('admin/users/<uuid:user_id>/orders/', views.admin_user_order_history, name='admin_user_order_history'),
+
+
     # Loyalty endpoints
     path('loyalty/account/', views.loyalty_account, name='loyalty_account'),
 
