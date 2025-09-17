@@ -1,11 +1,12 @@
 from rest_framework import status, filters
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import  IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
-from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.pagination import PageNumberPagination
+from .pagination import ProductPagination 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from .models import Category, Product, ProductImage
+from .models import Category, Product
 from .serializers import (
     CategorySerializer, 
     ProductListSerializer, 
@@ -70,7 +71,6 @@ def category_detail(request, category_id):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     elif request.method == 'DELETE':
-        # Check if category has products
         if category.products.exists():
             return Response({
                 'message': 'Cannot delete category with existing products'
@@ -89,11 +89,9 @@ def product_list_create(request):
     if request.method == 'GET':
         products = Product.objects.filter(is_active=True).select_related('category').prefetch_related('images')
         
-        # Apply filters
         filterset = ProductFilter(request.GET, queryset=products)
         products = filterset.qs
         
-        # Search functionality
         search = request.GET.get('search')
         if search:
             products = products.filter(
@@ -102,18 +100,17 @@ def product_list_create(request):
                 Q(category__name__icontains=search)
             )
         
-        # Ordering
         ordering = request.GET.get('ordering', '-created_at')
         if ordering in ['price', '-price', 'name', '-name', 'rating', '-rating', 'created_at', '-created_at']:
             products = products.order_by(ordering)
         
-        serializer = ProductListSerializer(products, many=True)
-        return Response({
-            'message': 'Products retrieved successfully',
-            'data': serializer.data,
-            'count': products.count()
-        }, status=status.HTTP_200_OK)
-    
+       
+        paginator = ProductPagination()
+        paginated_products = paginator.paginate_queryset(products, request)
+        serializer = ProductListSerializer(paginated_products, many=True)
+        return paginator.get_paginated_response(serializer.data)
+      
+
     elif request.method == 'POST':
         serializer = ProductCreateUpdateSerializer(data=request.data)
         if serializer.is_valid():
@@ -169,13 +166,11 @@ def product_detail(request, product_id):
     
     elif request.method == 'DELETE':
         try:
-            # Delete all images from Cloudinary
             cloudinary_manager = CloudinaryManager()
             public_ids = [img.public_id for img in product.images.all()]
             if public_ids:
                 cloudinary_manager.delete_multiple_images(public_ids)
             
-            # Delete product (will cascade delete images)
             product.delete()
             
             return Response({
@@ -194,7 +189,6 @@ def products_by_category(request, category_id):
     category = get_object_or_404(Category, id=category_id, is_active=True)
     products = Product.objects.filter(category=category, is_active=True).select_related('category').prefetch_related('images')
     
-    # Apply the same filtering and searching as product_list_create
     filterset = ProductFilter(request.GET, queryset=products)
     products = filterset.qs
     
@@ -209,26 +203,28 @@ def products_by_category(request, category_id):
     if ordering in ['price', '-price', 'name', '-name', 'rating', '-rating', 'created_at', '-created_at']:
         products = products.order_by(ordering)
     
-    serializer = ProductListSerializer(products, many=True)
-    return Response({
-        'message': f'Products in {category.name} retrieved successfully',
-        'category': CategorySerializer(category).data,
-        'data': serializer.data,
-        'count': products.count()
-    }, status=status.HTTP_200_OK)
+ 
+    request.custom_message = f'Products in {category.name} retrieved successfully'
+
+    paginator = ProductPagination()
+    paginated_products = paginator.paginate_queryset(products, request)
+    serializer = ProductListSerializer(paginated_products, many=True)
+    
+    # Get the response and add extra category data to it
+    response = paginator.get_paginated_response(serializer.data)
+    response.data['data']['category'] = CategorySerializer(category).data
+    return response
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
 def recent_featured_products(request):
     """Get recent featured products from all categories (trending, popular, new, best sellers)"""
-    # Get recent products from each category (last 30 days or most recent)
     from django.utils import timezone
     from datetime import timedelta
     
-    # Calculate date for "recent" (30 days ago)
     thirty_days_ago = timezone.now() - timedelta(days=30)
     
-    # Get recent products for each category, prioritizing recently added items
     trending_products = Product.objects.filter(
         is_trending=True, 
         is_active=True
@@ -290,7 +286,6 @@ def trending_products(request):
     """Get trending products"""
     products = Product.objects.filter(is_trending=True, is_active=True).select_related('category').prefetch_related('images')
     
-    # Apply filtering and searching
     filterset = ProductFilter(request.GET, queryset=products)
     products = filterset.qs
     
@@ -306,12 +301,13 @@ def trending_products(request):
     if ordering in ['price', '-price', 'name', '-name', 'rating', '-rating', 'created_at', '-created_at']:
         products = products.order_by(ordering)
     
-    serializer = ProductListSerializer(products, many=True)
-    return Response({
-        'message': 'Trending products retrieved successfully',
-        'data': serializer.data,
-        'count': products.count()
-    }, status=status.HTTP_200_OK)
+
+    request.custom_message = 'Trending products retrieved successfully'
+    paginator = ProductPagination()
+    paginated_products = paginator.paginate_queryset(products, request)
+    serializer = ProductListSerializer(paginated_products, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticatedOrReadOnly])
@@ -319,7 +315,6 @@ def best_seller_products(request):
     """Get best seller products"""
     products = Product.objects.filter(is_best_seller=True, is_active=True).select_related('category').prefetch_related('images')
     
-    # Apply filtering and searching
     filterset = ProductFilter(request.GET, queryset=products)
     products = filterset.qs
     
@@ -335,9 +330,8 @@ def best_seller_products(request):
     if ordering in ['price', '-price', 'name', '-name', 'rating', '-rating', 'created_at', '-created_at']:
         products = products.order_by(ordering)
     
-    serializer = ProductListSerializer(products, many=True)
-    return Response({
-        'message': 'Best seller products retrieved successfully',
-        'data': serializer.data,
-        'count': products.count()
-    }, status=status.HTTP_200_OK)
+    request.custom_message = 'Best seller products retrieved successfully'
+    paginator = ProductPagination()
+    paginated_products = paginator.paginate_queryset(products, request)
+    serializer = ProductListSerializer(paginated_products, many=True)
+    return paginator.get_paginated_response(serializer.data)
