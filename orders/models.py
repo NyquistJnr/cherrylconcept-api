@@ -414,6 +414,21 @@ class PaystackEvent(models.Model):
     
     def __str__(self):
         return f"Paystack Event {self.event_type} - {self.event_id}"
+    
+    def increment_processing_attempts(self, error: str = ""):
+        """Increments the attempt counter and saves the last error."""
+        self.processing_attempts += 1
+        if error:
+            self.last_processing_error = error
+        self.save(update_fields=['processing_attempts', 'last_processing_error', 'updated_at'])
+
+    def mark_as_processed(self):
+        """Marks the event as successfully processed."""
+        self.processed = True
+        self.processed_at = timezone.now()
+        self.last_processing_error = "" # Clear any previous errors
+        self.save(update_fields=['processed', 'processed_at', 'last_processing_error', 'updated_at'])
+
 
 class PaymentTransaction(models.Model):
     """Detailed payment transaction records"""
