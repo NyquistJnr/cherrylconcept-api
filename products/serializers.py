@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from django.utils.text import slugify
-from .models import Category, Product, ProductImage
+from .models import Category, Product, ProductImage, FeaturedCollection, HomePageFeaturedProducts
 from .utils import CloudinaryManager
+
 
 class CategorySerializer(serializers.ModelSerializer):
     products_count = serializers.SerializerMethodField()
@@ -145,3 +146,45 @@ class ProductCreateUpdateSerializer(serializers.ModelSerializer):
                 )
         
         return instance
+
+
+class FeaturedCollectionSerializer(serializers.ModelSerializer):
+    """Serializer for GETTING the featured collections."""
+    image_url = serializers.URLField(source='featured_product.main_image', read_only=True)
+    item_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FeaturedCollection
+        fields = ['collection_type', 'name', 'description', 'image_url', 'item_count']
+
+    def get_item_count(self, obj):
+        if obj.collection_type == 'new':
+            return Product.objects.filter(is_new=True, is_active=True).count()
+        if obj.collection_type == 'popular':
+            return Product.objects.filter(is_popular=True, is_active=True).count()
+        if obj.collection_type == 'best_seller':
+            return Product.objects.filter(is_best_seller=True, is_active=True).count()
+        return 0
+
+class FeaturedCollectionUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for CREATING/UPDATING featured collections."""
+    class Meta:
+        model = FeaturedCollection
+        fields = ['collection_type', 'name', 'description', 'featured_product']
+
+class HomePageFeaturedProductsSerializer(serializers.ModelSerializer):
+    """Serializer for GETTING the 4 home page featured products."""
+    product1 = ProductListSerializer(read_only=True)
+    product2 = ProductListSerializer(read_only=True)
+    product3 = ProductListSerializer(read_only=True)
+    product4 = ProductListSerializer(read_only=True)
+
+    class Meta:
+        model = HomePageFeaturedProducts
+        fields = ['product1', 'product2', 'product3', 'product4']
+
+class HomePageFeaturedProductsUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for CREATING/UPDATING the 4 home page featured products."""
+    class Meta:
+        model = HomePageFeaturedProducts
+        fields = ['product1', 'product2', 'product3', 'product4']

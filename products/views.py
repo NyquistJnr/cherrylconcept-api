@@ -1,17 +1,21 @@
 from rest_framework import status, filters
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import  IsAuthenticatedOrReadOnly
+from rest_framework.permissions import  IsAuthenticatedOrReadOnly,IsAdminUser
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from .pagination import ProductPagination 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
-from .models import Category, Product
+from .models import Category, Product, FeaturedCollection, HomePageFeaturedProducts
 from .serializers import (
     CategorySerializer, 
     ProductListSerializer, 
     ProductDetailSerializer, 
-    ProductCreateUpdateSerializer
+    ProductCreateUpdateSerializer,
+    FeaturedCollectionSerializer,
+    FeaturedCollectionUpdateSerializer,
+    HomePageFeaturedProductsSerializer,
+    HomePageFeaturedProductsUpdateSerializer,
 )
 from .utils import CloudinaryManager
 from .filters import ProductFilter
@@ -335,3 +339,66 @@ def best_seller_products(request):
     paginated_products = paginator.paginate_queryset(products, request)
     serializer = ProductListSerializer(paginated_products, many=True)
     return paginator.get_paginated_response(serializer.data)
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def feature_collections_view(request):
+    """
+    GET: Retrieve the 3 featured collections for the homepage.
+    POST: (Admin only) Create or update the featured collections.
+    """
+    if request.method == 'GET':
+        collections = FeaturedCollection.objects.all()
+        serializer = FeaturedCollectionSerializer(collections, many=True)
+        return Response({
+            'message': 'Featured collections retrieved successfully',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    if request.method == 'POST':
+        if not request.user.is_staff:
+            return Response({'error': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Expecting a list of 3 collection objects
+        serializer = FeaturedCollectionUpdateSerializer(data=request.data, many=True)
+        if serializer.is_valid():
+            for collection_data in serializer.validated_data:
+                collection_type = collection_data.get('collection_type')
+                FeaturedCollection.objects.update_or_create(
+                    collection_type=collection_type,
+                    defaults=collection_data
+                )
+            return Response({'message': 'Featured collections updated successfully'}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticatedOrReadOnly])
+def home_featured_products_view(request):
+    """
+    GET: Retrieve the 4 featured products for the homepage.
+    POST: (Admin only) Set or update the 4 featured products.
+    """
+    # Use get_or_create for the singleton model
+    featured_products_instance, created = HomePageFeaturedProducts.objects.get_or_create(pk=1)
+
+    if request.method == 'GET':
+        serializer = HomePageFeaturedProductsSerializer(featured_products_instance)
+        # We want a flat list of products, not a nested object
+        products_list = [product for product in serializer.data.values() if product is not None]
+        return Response({
+            'message': 'Home page featured products retrieved successfully',
+            'data': products_list
+        }, status=status.HTTP_200_OK)
+
+    if request.method == 'POST':
+        if not request.user.is_staff:
+            return Response({'error': 'You do not have permission to perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        serializer = HomePageFeaturedProductsUpdateSerializer(
+            instance=featured_products_instance,
+            data=request.data
+        )
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'message': 'Home page featured products updated successfully'}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

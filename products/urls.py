@@ -14,4 +14,6 @@ urlpatterns = [
     path('trending/', views.trending_products, name='trending_products'),
     path('best-sellers/', views.best_seller_products, name='best_seller_products'),
     path('recent-featured/', views.recent_featured_products, name='recent_featured_products'),
+    path('feature-collections/', views.feature_collections_view, name='feature_collections'),
+    path('home-featured-products/', views.home_featured_products_view, name='home_featured_products'),
 ]

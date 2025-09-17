@@ -95,3 +95,40 @@ class ProductImage(models.Model):
         if self.is_main:
             ProductImage.objects.filter(product=self.product, is_main=True).update(is_main=False)
         super().save(*args, **kwargs)
+
+
+class FeaturedCollection(models.Model):
+    """
+    Stores admin-configured data for the three featured collections on the homepage.
+    """
+    COLLECTION_CHOICES = [
+        ('new', 'New Arrivals'),
+        ('popular', 'Popular Picks'),
+        ('best_seller', 'Best Sellers'),
+    ]
+    
+    collection_type = models.CharField(max_length=20, choices=COLLECTION_CHOICES, primary_key=True)
+    name = models.CharField(max_length=100, help_text="e.g., 'New Arrivals'")
+    description = models.TextField(blank=True)
+    featured_product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, help_text="The product whose image will be used as the collection background.")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.get_collection_type_display()
+
+class HomePageFeaturedProducts(models.Model):
+    """
+    A singleton model to store the 4 products featured on the homepage.
+    This model should only ever have one instance.
+    """
+    product1 = models.ForeignKey(Product, related_name='featured_slot_1', on_delete=models.SET_NULL, null=True, blank=True)
+    product2 = models.ForeignKey(Product, related_name='featured_slot_2', on_delete=models.SET_NULL, null=True, blank=True)
+    product3 = models.ForeignKey(Product, related_name='featured_slot_3', on_delete=models.SET_NULL, null=True, blank=True)
+    product4 = models.ForeignKey(Product, related_name='featured_slot_4', on_delete=models.SET_NULL, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name_plural = "Home Page Featured Products"
+
+    def __str__(self):
+        return "Home Page Featured Products"
